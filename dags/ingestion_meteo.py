@@ -1,5 +1,5 @@
 from airflow import DAG
-from airflow.providers.standard.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import requests
 from typing import Dict, Any
