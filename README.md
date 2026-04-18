@@ -9,10 +9,23 @@ Ce projet implémente un pipeline de données complet (**ETL**) pour collecter, 
 ## Architecture Technique
 
 **Extraction (Python/Airflow) :** Récupération des données via l'API Open-Meteo.  
-**Stockage (AWS S3) :** Persistance des données au format JSON avec un partitionnement optimisé (Hive-style).  
+**Stockage (AWS S3) :** Persistance des données au format JSON avec un partitionnement optimisé.  
 **Catalogue (AWS Glue) :** Définition du schéma et gestion des partitions.  
 **Analyse (AWS Athena) :** Requêtage SQL direct sur le Data Lake.  
-**Analyse (DBeaver) :** Requêtage SQL direct sur le Data Lake depuis un IDE SQL open source.  
+**IDE SQL (DBeaver) :** Requêtage SQL direct sur le Data Lake depuis un IDE SQL open source.  
+**Visualisation (PowerBI) :** Mise en place de visuels pour mieux comprendre la donnée.   
+
+
+
+---
+
+## Prérequis Système
+Pour répliquer cet environnement, les composants suivants sont nécessaires :
+
+- Système d'exploitation : WSL2 (Ubuntu 22.04+) ou Linux Natif.
+- Langage : Python 3.10 ou supérieur.
+- Infrastructure : Un compte AWS avec les droits AdministratorAccess (pour le POC) ou des politiques restreintes sur S3, Glue et Athena.
+- Visualisation : Power BI Desktop (Windows) et le driver Simba Athena ODBC installé.
 
 ---
 
@@ -20,8 +33,8 @@ Ce projet implémente un pipeline de données complet (**ETL**) pour collecter, 
 
 ### 1. Environnement Local (WSL / Ubuntu)
 
-Il est important de noter, avant d'aller plus loin, que l'idée de le faire en local est pour limiter la difficulté technique pour un temps réduit. Si j'avais eu plus de temps j'aurais considéré porter le projet sur docker pour avoir une solution plus facilement réplicable.   
-La première raison est donc le temps de développement, la deuxième est le coût. Je n'ai pas envie de payer le portage d'un container docker sur airflow de toute façon à mes frais. Mais j'aurais pu faire tourner le container docker en local aussi.  
+Il est important de noter, avant d'aller plus loin, que le choix du local vise à limiter la difficulté technique pour un temps réduit. 
+Pour ce POC, l'installation native sur WSL a été privilégiée pour maximiser la vitesse de déploiement. Une version conteneurisée (Docker) est prévue dans la roadmap pour faciliter la portabilité 
   
 
 Le projet utilise Airflow 2.10.5 pour garantir la stabilité des composants AWS.
@@ -53,7 +66,7 @@ ln -s ~/meteo_project/dags/ingestion_meteo.py ~/airflow/dags/ingestion_meteo.py
 ```
 
 Notre dossier dags pourra donc être sauvegardé sur git, sans que les autres fichiers du repo ne soient dans dans le dossier dags d'Airflow.
-Le dossier dags d'airflow pourra donc avoir plusieurs dossiers sources différentes.
+Cette méthode de liens symboliques permet de maintenir le code source sous versioning Git sans polluer le répertoire d'installation d'Airflow.
   
 
 
@@ -102,7 +115,7 @@ LOCATION 's3://VOTRE-NOM-DE-BUCKET/weather/';
 Cette seconde entrée permet de créer la table externe si elle n'existe pas encore. 
 La partition à la fin permet d'expliquer la structure de nos données dans l'espace de stockage (qu'on sauvegarde partionné par Années/Mois/Jours.)  
 Il faut remplacer la LOCATION par votre bucket S3 créé précédemment.  
-Si c'est un nouveau compte AWS ou qu'Athena n'a jamais été utilisé avant, il faut aussi définir un bucket pour les opérations d'Athena, une banderolle bleue devrait vous amener à l'endroit où le faire, vous pouvez créer un S3 spécifique, ou créer une folder dans le S3 précédemment créé. 
+Si c'est un nouveau compte AWS ou qu'Athena n'a jamais été utilisé avant, il faut aussi définir un bucket pour les opérations d'Athena, une banderole bleue devrait vous amener à l'endroit où le faire, vous pouvez créer un S3 spécifique, ou créer un dossier dans le S3 précédemment créé. 
   
 La ligne ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe' est spécifique a Hive et Amazon Athena pour lire et écrire des données au format JSON. Nos données étant sauvegardées sous ce format dans le S3.
 
@@ -151,7 +164,7 @@ LIMIT 10;
 ```
 
 Side note intéressante. Ici j'ai compté le nombre de lignes et j'en avais 12. J'ai laissé airflow tourner toute la nuit, et je devais en avoir plus. J'ai relancé le MSCK REPAIR, et j'en avais 84.  
-C'était donc la confirmation que Athena n'avait pas l'actualisation des nouveaux folders automatique. J'ai donc ajouté le MSCK REPAIR en fin du dag. C'est une solution provisoire puisque je suppose qu'un setting doit exister dans Athena. A voir laquelle est la moins cher au long terme.
+C'était donc la confirmation que Athena étant un moteur Schema-on-Read, il ne détecte pas automatiquement les nouvelles partitions ajoutées directement sur S3. L'ajout du MSCK REPAIR en fin de DAG garantit la mise à jour du catalogue Glue.. J'ai donc ajouté le MSCK REPAIR en fin du dag. C'est une solution provisoire puisque l'utilisation d'un AWS Glue Crawler planifié est préférable à une exécution manuelle. A voir laquelle est la plus économique au long terme.
 
 ### Création d'une vue 
 
@@ -178,10 +191,9 @@ Le résultat obtenu de cette vue est le suivant.
 
 ![alt text](images_readme/vue_weather_metrics.png)
 
-On voit déjà que les coordonnées sont un plus mais on n'a pas le nom des villes qu'on pourra intuitivement rajouté.  
-A noter que j'aurais pu le rajouter dans la création de la vue : 
+On voit déjà que les coordonnées sont un plus mais on n'a pas le nom des villes qu'on pourra intuitivement rajouter.  
+A noter cette requête SQL pourrait régler le problème dans la création de la vue : 
 ```SQL
-CREATE OR REPLACE VIEW weather_db.view_weather_metrics AS 
 SELECT 
     -- Mapping des coordonnées vers les noms de villes
 	CASE 
@@ -195,16 +207,13 @@ SELECT
         ELSE 'Inconnue (' || CAST(latitude AS VARCHAR) || ',' || CAST(longitude AS VARCHAR) || ')'
     END as ville,
     CAST(year AS INTEGER) as year,
-    CAST(month AS INTEGER) as month,
-...
+    ...
 ```
 
-La raison pour laquelle je ne l'ai pas fait est A. ça impliquerait un changement de la vue à chaque fois qu'on change une ville, que ce soit l'ajouter ou l'enlever. Je préfère minimiser le nombre d'endroits où on va devoir modifier du code.  
-Ensuite, parce que c'est un POC à visée éducative, et que par conséquent je préfère le faire dans PowerBI, comme je vais l'expliquer ensuite.  
+Mettre cette query en place impliquerait un changement de la vue à chaque fois qu'on change une ville, que ce soit l'ajouter ou l'enlever. Minimiser le nombre d'endroits où on va devoir modifier du code me semble plus adéquat.  
+Ce POC est de plus à visée éducative, par conséquent il y a un intérêt le faire dans PowerBI.  
 
 
-Donc rien que cette vue peut nous permettre d'en tirer quelque chose sur PowerBI. 
-On pourrait considérer que dans ce POC, fusionner les Silver et Gold dans une vue SQL dynamique permet une utilisation plus rapide de PowerBI. Et dans le cas d'un POC au temps limité je devrais m'arrêter à faire ça.  
 
 ## Power BI
 
@@ -229,15 +238,15 @@ Une fois installé, tu dois déclarer ta connexion au niveau de Windows :
 > **Note** : Parenthèse installation terminée
 
 Dans Power BI, on importe les données via Amazon Athena.  
-Dans le champ DSN, rentrer Amazon Simba (ou votre DSN si vous n'avez pas suivi l'étape précédente).  
+Dans le champ DSN, rentrer Simba Athena (ou votre DSN si vous n'avez pas suivi l'étape précédente).  
 Pour le choix importer vs DirectQuery c'est propre au cas d'utilisation, le DirectQuery va passer pas Athena a chaque clic et 
 donc amener des coûts supplémentaires. C'est donc une décision à faire avec le business.
 
 ### Traitement des données
 
-Un point intéressant ici et PowerQuery (qui ne s'appelle plus comme ça) contre une colonne calculée.  
-Dans un cas je peux cliquer sur Transformer les données, qui va ouvrir un éditeur dans une fenêtre indépendante.   
-Cet éditeur permet de traiter les données lors de leur importation ce qui permet de les compresser avant qu'elles arrivent dans PowerBI.  
+Le traitement via l'éditeur Power Query (bouton 'Transformer les données') a été préféré aux colonnes calculées DAX.  
+Cela permet d'effectuer les transformations lors de l'ingestion (couche de transformation amont), optimisant ainsi la compression du moteur VertiPaq.  
+
 Dans le cadre de ce projet, je dois créer une table cities, et créer une clé (que j'utilise en concaténant les coordonnées) pour lier chaque entrée à un nom de ville selon ses coordonnées. J'aurais pu le faire en Pandas en amont, ou en SQL.  
 Je peux aussi le faire en DaX derrière mais ça alourdit le rapport PowerBI et c'est moins optimal au niveau calcul.
 
@@ -248,14 +257,14 @@ Suivre un cours sur les différents visuels, ou juste passer du temps avec perme
 De plus, ce genre de rapport se fait main dans la main avec le business. Ici ceux choisi ne l'ont été que pour un POC.
 
 
-### Suite du projet
+###  Roadmap Technique (Évolutions)
+Cette section présente les axes d'amélioration identifiés pour passer du POC à une solution de production résiliente.
 
- 
-**1. Le dag n'est pas idempotent :** Il tourne sur un ordinateur qui parfois ne fonctionne pas la nuit, si on met un catchup sur le dag il prendra juste "n" fois la température à l'heure du script.  
-Il est donc primordial de corriger le DAG pour qu'il puisse récupérer les données du passé.  
 
-**2. Implément des tests de data quality :** Il serait intéressant de vérifier la cohérence des données, aucun test de data quality n'est implémenté pour le moment. De simple tests de duplicats dans un premier temps par exemple.
 
-**3. Historisation de l'ETL:** Il n'y a pas d'historisation autre que l'archive (qu'on peut appeler bronze si on veut). Si il y a des soucis par la suite, tous les calculs de nettoyage devraient être refaits, pourraient être différents et nous n'aurions pas d'historisation pour comparer. 
-
-Une branche pour l'historisation va donc être créée, et le main va être stabilisé tant que la branche n'est pas fonctionnelle. N'hésitez donc pas à vérifier les branches de ce projet, si cette fin de readme est toujours présente c'est qu'il n'y a pas eu de merge parce que le résultat n'est pas fonctionnel.
+| Phase | Objectif | Description |
+| :--- | :--- | :--- |
+| **P1** | **Résilience** | Migration vers `logical_date` (Idempotence) & Stratégie de Backfill. |
+| **P2** | **Optimisation** | Passage au format **Parquet** (Silver) & Partitionnement dynamique. |
+| **P3** | **Qualité** | Tests des données tout au long du process. |
+| **P4** | **DevOps** | Déploiement via **Docker** & CI/CD GitHub Actions. |
