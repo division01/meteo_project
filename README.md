@@ -184,16 +184,16 @@ A noter que j'aurais pu le rajouter dans la création de la vue :
 CREATE OR REPLACE VIEW weather_db.view_weather_metrics AS 
 SELECT 
     -- Mapping des coordonnées vers les noms de villes
-    CASE 
-        WHEN latitude = 50.85 AND longitude = 4.35 THEN 'Bruxelles'
-        WHEN latitude = 51.21 AND longitude = 4.40 THEN 'Anvers'
-        WHEN latitude = 50.41 AND longitude = 4.44 THEN 'Charleroi'
-        WHEN latitude = 51.05 AND longitude = 3.73 THEN 'Gand'
-        WHEN latitude = 50.63 AND longitude = 5.57 THEN 'Liège'
-        WHEN latitude = 50.46 AND longitude = 4.86 THEN 'Namur'
-        ELSE 'Inconnue'
+	CASE 
+        WHEN ROUND(latitude, 2) = 50.85 AND ROUND(longitude, 2) = 4.35 THEN 'Bruxelles'
+        WHEN ROUND(latitude, 2) = 51.21 AND ROUND(longitude, 2) = 4.41 THEN 'Anvers'
+        WHEN ROUND(latitude, 2) = 50.40 AND ROUND(longitude, 2) = 4.44 THEN 'Charleroi'
+        WHEN ROUND(latitude, 2) = 51.05 AND ROUND(longitude, 2) = 3.73 THEN 'Gand'
+        WHEN ROUND(latitude, 2) = 50.64 AND ROUND(longitude, 2) = 5.57 THEN 'Liège'
+        WHEN ROUND(latitude, 2) = 50.48 AND ROUND(longitude, 2) = 4.87 THEN 'Namur'
+        WHEN ROUND(latitude, 2) = 51.09 AND ROUND(longitude, 2) = 2.58 THEN 'La Panne'
+        ELSE 'Inconnue (' || CAST(latitude AS VARCHAR) || ',' || CAST(longitude AS VARCHAR) || ')'
     END as ville,
-    
     CAST(year AS INTEGER) as year,
     CAST(month AS INTEGER) as month,
 ...
