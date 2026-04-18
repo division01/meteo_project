@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 from datetime import datetime, timedelta
 import requests
 import json
@@ -110,3 +111,16 @@ with DAG(
                 'lon': coords['lon']
             }
         )
+
+    # Tâche de synchronisation du catalogue Glue
+    repair_athena_table = AthenaOperator(
+        task_id='repair_athena_table',
+        query='MSCK REPAIR TABLE weather_db.weather_data;',
+        database='weather_db',
+        aws_conn_id='aws_default',
+        output_location=f's3://{BUCKET_NAME}/athena/' 
+    )
+
+    # On s'assure que toutes les tâches d'ingestion sont finies avant de repair
+    # La syntaxe [liste_de_taches] >> repair signifie "attendre tout le monde"
+    dag.tasks[:-1] >> repair_athena_table
