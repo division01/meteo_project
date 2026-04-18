@@ -152,3 +152,38 @@ LIMIT 10;
 
 Side note intéressante. Ici j'ai compté le nombre de lignes et j'en avais 12. J'ai laissé airflow tourner toute la nuit, et je devais en avoir plus. J'ai relancé le MSCK REPAIR, et j'en avais 84.  
 C'était donc la confirmation que Athena n'avait pas l'actualisation des nouveaux folders automatique. J'ai donc ajouté le MSCK REPAIR en fin du dag. C'est une solution provisoire puisque je suppose qu'un setting doit exister dans Athena. A voir laquelle est la moins cher au long terme.
+
+### Création d'une vue 
+
+Une fois nos données disponibles et en place, pour une meilleur visualisation de nos données j'ai créé une vue : 
+
+```SQL 
+
+CREATE OR REPLACE VIEW weather_db.view_weather_metrics AS 
+SELECT 
+    CAST(year AS INTEGER) as year,
+    CAST(month AS INTEGER) as month,
+    CAST(day AS INTEGER) as day,
+    CAST(hour AS INTEGER) as hour,
+    CAST(year || '-' || month || '-' || day || ' ' || hour || ':00:00' AS TIMESTAMP) as full_timestamp,
+    current_weather.temperature as temperature_c,
+    current_weather.windspeed as wind_speed_kmh,
+    current_weather.weathercode as weather_condition_code,
+    latitude,
+    longitude
+FROM weather_db.weather_data;
+```
+Le résultat obtenu de cette vue est le suivant. 
+On voit déjà que les coordonnées sont un plus mais on n'a pas le nom des villes qu'on pourra intuitivement rajouté. 
+
+![alt text](images_readme/vue_weather_metrics.png)
+
+Donc rien que cette vue peut nous permettre d'en tirer quelque chose sur PowerBI. 
+On pourrait considérer que dans ce POC, fusionner les Silver et Gold dans une vue SQL dynamique permet une utilisation plus rapide de PowerBI. Et dans le cas d'un POC au temps limité je devrais m'arrêter à faire ça.  
+
+Le plan A est donc de faire une démo Power BI et présenter ce travail.  
+Le soucis que j'ai avec ça est que mon dag n'est pas idempotent. Il tourne sur mon ordinateur qui parfois ne fonctionne pas la nuit, si mon dag met un catchup il prendra juste n fois la température à l'heure du script.  
+Il est donc primordial de corriger le DAG pour qu'il puisse récupérer les données du passé.  
+Ensuite il serait intéressant de vérifier la cohérence des données, aucun test de data quality n'est implémenté. 
+Et dernier point, je n'ai pas d'historisation autre que mon archive (qu'on peut appeler bronze si on veut). Si il y a des soucis par la suite, tous les calculs de nettoyage devraient être refaits, pourraient être différents et nous n'aurions pas d'historisation pour comparer.  
+Conclusion, je dois créer une branche pour l'historisation, et ne plus toucher au main tant que la branche n'est pas fonctionnelle. N'hésitez donc pas à vérifier les branches de ce projet, si cette fin de readme est toujours présente c'est que je n'ai pas merge parce que le résultat n'est pas fonctionnel. Le travail fourni n'en sera pas moins intéressant.
