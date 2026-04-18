@@ -206,9 +206,56 @@ Ensuite, parce que c'est un POC à visée éducative, et que par conséquent je 
 Donc rien que cette vue peut nous permettre d'en tirer quelque chose sur PowerBI. 
 On pourrait considérer que dans ce POC, fusionner les Silver et Gold dans une vue SQL dynamique permet une utilisation plus rapide de PowerBI. Et dans le cas d'un POC au temps limité je devrais m'arrêter à faire ça.  
 
-Le plan A est donc de faire une démo Power BI et présenter ce travail.  
-Le soucis que j'ai avec ça est que mon dag n'est pas idempotent. Il tourne sur mon ordinateur qui parfois ne fonctionne pas la nuit, si mon dag met un catchup il prendra juste n fois la température à l'heure du script.  
+## Power BI
+
+### Importer les données
+
+> **Note** : On va parler d'une première utilisation ici. Si vous avez déjà utilisé PowerBI passez à la suite.
+
+Il faudra télécharger un driver JDBC/ODBC pour communiquer avec Athena. [Driver Athena ODBC](https://docs.aws.amazon.com/athena/latest/ug/connect-with-odbc.html )   
+
+Une fois installé, tu dois déclarer ta connexion au niveau de Windows :
+- Appuie sur la touche Windows et tape "Sources de données ODBC (64 bits)". Ouvre-le.
+- Sous l'onglet DSN utilisateur, clique sur Ajouter.
+- Choisis Simba Athena ODBC Driver et clique sur Terminer.
+- Dans la fenêtre qui s'ouvre :
+    - Data Source Name : Tape Simba Athena (c'est ce nom que tu mettras dans Power BI).
+    - AwsRegion : eu-central-1.
+    - S3 Output Location : Ton bucket de résultats (ex: s3://ton-bucket-athena-results/).
+    - Authentication Type : Choisis IAM Credentials.
+    - User / Password : Mets ton Access Key et ta Secret Key.
+- Clique sur Test pour valider.
+
+> **Note** : Parenthèse installation terminée
+
+Dans Power BI, on importe les données via Amazon Athena.  
+Dans le champ DSN, rentrer Amazon Simba (ou votre DSN si vous n'avez pas suivi l'étape précédente).  
+Pour le choix importer vs DirectQuery c'est propre au cas d'utilisation, le DirectQuery va passer pas Athena a chaque clic et 
+donc amener des coûts supplémentaires. C'est donc une décision à faire avec le business.
+
+### Traitement des données
+
+Un point intéressant ici et PowerQuery (qui ne s'appelle plus comme ça) contre une colonne calculée.  
+Dans un cas je peux cliquer sur Transformer les données, qui va ouvrir un éditeur dans une fenêtre indépendante.   
+Cet éditeur permet de traiter les données lors de leur importation ce qui permet de les compresser avant qu'elles arrivent dans PowerBI.  
+Dans le cadre de ce projet, je dois créer une table cities, et créer une clé (que j'utilise en concaténant les coordonnées) pour lier chaque entrée à un nom de ville selon ses coordonnées. J'aurais pu le faire en Pandas en amont, ou en SQL.  
+Je peux aussi le faire en DaX derrière mais ça alourdit le rapport PowerBI et c'est moins optimal au niveau calcul.
+
+### Visuels 
+
+Il n'y a pas vraiment de documentation à donner ici pour les visuels.  
+Suivre un cours sur les différents visuels, ou juste passer du temps avec permet de mieux les comprendre.  
+De plus, ce genre de rapport se fait main dans la main avec le business. Ici ceux choisi ne l'ont été que pour un POC.
+
+
+### Suite du projet
+
+ 
+**1. Le dag n'est pas idempotent :** Il tourne sur un ordinateur qui parfois ne fonctionne pas la nuit, si on met un catchup sur le dag il prendra juste "n" fois la température à l'heure du script.  
 Il est donc primordial de corriger le DAG pour qu'il puisse récupérer les données du passé.  
-Ensuite il serait intéressant de vérifier la cohérence des données, aucun test de data quality n'est implémenté. 
-Et dernier point, je n'ai pas d'historisation autre que mon archive (qu'on peut appeler bronze si on veut). Si il y a des soucis par la suite, tous les calculs de nettoyage devraient être refaits, pourraient être différents et nous n'aurions pas d'historisation pour comparer.  
-Conclusion, je dois créer une branche pour l'historisation, et ne plus toucher au main tant que la branche n'est pas fonctionnelle. N'hésitez donc pas à vérifier les branches de ce projet, si cette fin de readme est toujours présente c'est que je n'ai pas merge parce que le résultat n'est pas fonctionnel. Le travail fourni n'en sera pas moins intéressant.
+
+**2. Implément des tests de data quality :** Il serait intéressant de vérifier la cohérence des données, aucun test de data quality n'est implémenté pour le moment. De simple tests de duplicats dans un premier temps par exemple.
+
+**3. Historisation de l'ETL:** Il n'y a pas d'historisation autre que l'archive (qu'on peut appeler bronze si on veut). Si il y a des soucis par la suite, tous les calculs de nettoyage devraient être refaits, pourraient être différents et nous n'aurions pas d'historisation pour comparer. 
+
+Une branche pour l'historisation va donc être créée, et le main va être stabilisé tant que la branche n'est pas fonctionnelle. N'hésitez donc pas à vérifier les branches de ce projet, si cette fin de readme est toujours présente c'est qu'il n'y a pas eu de merge parce que le résultat n'est pas fonctionnel.
