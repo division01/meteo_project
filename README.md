@@ -173,10 +173,35 @@ SELECT
     longitude
 FROM weather_db.weather_data;
 ```
-Le résultat obtenu de cette vue est le suivant. 
-On voit déjà que les coordonnées sont un plus mais on n'a pas le nom des villes qu'on pourra intuitivement rajouté. 
+Le résultat obtenu de cette vue est le suivant.  
+
 
 ![alt text](images_readme/vue_weather_metrics.png)
+
+On voit déjà que les coordonnées sont un plus mais on n'a pas le nom des villes qu'on pourra intuitivement rajouté.  
+A noter que j'aurais pu le rajouter dans la création de la vue : 
+```SQL
+CREATE OR REPLACE VIEW weather_db.view_weather_metrics AS 
+SELECT 
+    -- Mapping des coordonnées vers les noms de villes
+    CASE 
+        WHEN latitude = 50.85 AND longitude = 4.35 THEN 'Bruxelles'
+        WHEN latitude = 51.21 AND longitude = 4.40 THEN 'Anvers'
+        WHEN latitude = 50.41 AND longitude = 4.44 THEN 'Charleroi'
+        WHEN latitude = 51.05 AND longitude = 3.73 THEN 'Gand'
+        WHEN latitude = 50.63 AND longitude = 5.57 THEN 'Liège'
+        WHEN latitude = 50.46 AND longitude = 4.86 THEN 'Namur'
+        ELSE 'Inconnue'
+    END as ville,
+    
+    CAST(year AS INTEGER) as year,
+    CAST(month AS INTEGER) as month,
+...
+```
+
+La raison pour laquelle je ne l'ai pas fait est A. ça impliquerait un changement de la vue à chaque fois qu'on change une ville, que ce soit l'ajouter ou l'enlever. Je préfère minimiser le nombre d'endroits où on va devoir modifier du code.  
+Ensuite, parce que c'est un POC à visée éducative, et que par conséquent je préfère le faire dans PowerBI, comme je vais l'expliquer ensuite.  
+
 
 Donc rien que cette vue peut nous permettre d'en tirer quelque chose sur PowerBI. 
 On pourrait considérer que dans ce POC, fusionner les Silver et Gold dans une vue SQL dynamique permet une utilisation plus rapide de PowerBI. Et dans le cas d'un POC au temps limité je devrais m'arrêter à faire ça.  
