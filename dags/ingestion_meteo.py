@@ -116,6 +116,7 @@ def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -
 # endregion LOAD
 
 # region MAIN
+@task(map_index_template="{{ task.op_kwargs['city_name'] }}")
 def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str, l_date: str) -> None:
     """
     Coordonne les étapes pour chaque instance de tâche.
@@ -155,15 +156,12 @@ with DAG(
     cities = get_cities_from_s3()
 
     # Dynamic Task Mapping 
-    ingest_tasks = PythonOperator.partial(
-        task_id='ingest_weather',
-        python_callable=weather_pipeline_task,
-        map_index_template="{{ task.op_kwargs['city_name'] }}", # Pour voir le nom de la ville dans l'UI
-        op_kwargs={
-            'date_str': "{{ ds }}",             # String YYYY-MM-DD pour l'appel API   
-            'l_date': "{{ logical_date }}"      # String datetime pour l'heure pour le partitionnement S3
-        }
-    ).expand(op_kwargs=cities)                  # On déploie les tâches dynamiquement
+    # Partial() permet de définir les valeurs communes a toutes les subtasks
+    # Expand() permet de définir créer chaque sub task avec ses valeurs propres
+    ingest_tasks = weather_pipeline_task.partial(
+        date_str="{{ ds }}",                        # String YYYY-MM-DD pour l'appel API 
+        l_date="{{ logical_date }}"                 # String datetime pour l'heure pour le partitionnement S3
+    ).expand_kwargs(cities)
 
     # Tâche de synchronisation du catalogue Glue
     # TODO : Ajouter un AWS GLUE Crawler, la tâche est trop longue en case de backfill
