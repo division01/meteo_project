@@ -84,7 +84,7 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float) -> None:
     """
     data = fetch_weather_data(lat, lon)
     path = save_to_s3(data, city_name)
-    print(f"✅ Données pour {city_name} stockées dans : {path}")
+    print(f"Données pour {city_name} stockées dans : {path}")
 
 
 
