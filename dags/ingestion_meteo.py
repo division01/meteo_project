@@ -78,7 +78,7 @@ def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -
     return s3_key
 
 # --- 3. ORCHESTRATION ---
-def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str, l_date: pendulum.DateTime) -> None:
+def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str, l_date: str) -> None:
     """
     Coordonne les étapes pour chaque instance de tâche.
 
@@ -87,10 +87,14 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
         lat: Latitude de la ville.
         lon: Longitude de la ville.
         date_str: La date logique d'airflow ( YYYY-MM-DD ).
-        l_date: L'objet datetime pour le partitionnement S3.
+        l_date: Le string de datetime pour le partitionnement S3.
     """
+
+    # On transforme la string reçue d'Airflow en objet Pendulum (datetime)
+    l_date_obj = pendulum.parse(l_date)
+
     data = fetch_weather_data(lat, lon, date_str)
-    path = save_to_s3(data, city_name, l_date)
+    path = save_to_s3(data, city_name, l_date_obj)
     print(f"Données pour {city_name} stockées dans : {path}")
 
 
@@ -117,7 +121,7 @@ with DAG(
                 'lat': coords['lat'],
                 'lon': coords['lon'],
                 'date_str':"{{ ds }}",          # String YYYY-MM-DD pour l'appel API
-                'l_date': "{{ logical_date }}"  # Objet datetime pour le partitionnement S3
+                'l_date': "{{ logical_date }}"  # String datetime pour l'heure pour le partitionnement S3
             }
         )
 
