@@ -6,21 +6,41 @@ from datetime import datetime, timedelta
 import requests
 import json
 import pendulum
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-### VARIABLES ###
+# region VARIABLES 
 BUCKET_NAME = "engie-weather-data-vincent"
-CITIES = {
-    "Bruxelles": {"lat": 50.8503, "lon": 4.3517},
-    "Liege": {"lat": 50.6337, "lon": 5.5675},
-    "Charleroi": {"lat": 50.4108, "lon": 4.4446},
-    "Namur": {"lat": 50.4674, "lon": 4.8719},
-    "La_Panne": {"lat": 51.1058, "lon": 2.5891},
-    "Anvers": {"lat": 51.2194, "lon": 4.4025}
-}
+CITIES_PATH = "static/cities/cities.csv"
+AWS_CONN_ID = "aws_default"
 
-### FONCTIONS ###
-# --- 1. EXTRACTION ---
+@task
+def get_cities_from_s3() -> List[Dict[str, Any]]:
+    """
+    Récupère le référentiel des villes depuis S3 et le convertit en dictionnaire.
+
+    Cette fonction extrait un fichier CSV statique servant de table de dimension. 
+    Le format attendu est : city_id, city_name, lat, lon.
+
+    Returns:
+        List[Dict[str, Any]]: Une liste de dictionnaires, où chaque dictionnaire 
+        contient les paramètres d'une ville pour l'ingestion (name, lat, lon).
+    """
+    s3 = S3Hook(aws_conn_id=AWS_CONN_ID)
+    content = s3.read_key(key=CITIES_PATH, bucket_name=BUCKET_NAME)
+    
+    # TODO : Rendre le parsing plus robuste via Pandas
+    lines = content.splitlines()[1:] # On ignore le header
+    cities_list = []
+    for line in lines:
+        c_id, name, lat, lon = line.split(',')
+        cities_list.append({
+            'city_name': name,
+            'lat': float(lat),
+            'lon': float(lon)
+        })
+    return cities_list
+
+
 def fetch_weather_data(lat: float, lon: float, date_str: str) -> Dict[str, Any]:
     """
     Appelle l'API Open-Meteo pour récupérer la météo à la date et heure d'une ville spécifique.
@@ -59,7 +79,7 @@ def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -
     Returns:
         S3_key:Chemin S3 où les données ont été stockées.
     """
-    s3 = S3Hook(aws_conn_id='aws_default')
+    s3 = S3Hook(aws_conn_id=AWS_CONN_ID)
     
     # Création du chemin partitionné
     year = l_date.strftime('%Y')
@@ -104,7 +124,7 @@ with DAG(
     dag_id='weather_belgium_backfill_partitioned',
     start_date=datetime(2026, 4, 1),
     schedule='0 * * * *',
-    catchup=True,
+    catchup=False,
     default_args={
         'owner': 'Vincent',
         'retries': 2,
@@ -112,28 +132,28 @@ with DAG(
     }
 ) as dag:
 
-    for city, coords in CITIES.items():
-        PythonOperator(
-            task_id=f'ingest_{city.lower()}',
-            python_callable=weather_pipeline_task,
-            op_kwargs={
-                'city_name': city,
-                'lat': coords['lat'],
-                'lon': coords['lon'],
-                'date_str':"{{ ds }}",          # String YYYY-MM-DD pour l'appel API
-                'l_date': "{{ logical_date }}"  # String datetime pour l'heure pour le partitionnement S3
-            }
-        )
+    cities = get_cities_from_s3()
+
+    # Dynamic Task Mapping 
+    ingest_tasks = PythonOperator.partial(
+        task_id='ingest_weather',
+        python_callable=weather_pipeline_task,
+        map_index_template="{{ task.op_kwargs['city_name'] }}", # Pour voir le nom de la ville dans l'UI
+        op_kwargs={
+            'date_str': "{{ ds }}",             # String YYYY-MM-DD pour l'appel API   
+            'l_date': "{{ logical_date }}"      # String datetime pour l'heure pour le partitionnement S3
+        }
+    ).expand(op_kwargs=cities)                  # On déploie les tâches dynamiquement
 
     # Tâche de synchronisation du catalogue Glue
+    # TODO : Ajouter un AWS GLUE Crawler, la tâche est trop longue en case de backfill
     repair_athena_table = AthenaOperator(
         task_id='repair_athena_table',
         query='MSCK REPAIR TABLE weather_db.weather_data;',
         database='weather_db',
-        aws_conn_id='aws_default',
+        aws_conn_id=AWS_CONN_ID,
         output_location=f's3://{BUCKET_NAME}/athena/' 
     )
 
     # On s'assure que toutes les tâches d'ingestion sont finies avant de repair
-    # La syntaxe [liste_de_taches] >> repair signifie "attendre tout le monde"
-    dag.tasks[:-1] >> repair_athena_table
+    ingest_tasks >> repair_athena_table
