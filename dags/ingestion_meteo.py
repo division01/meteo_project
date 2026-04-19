@@ -1,4 +1,5 @@
 from airflow import DAG
+from airflow.decorators import task
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.operators.athena import AthenaOperator
@@ -12,6 +13,11 @@ from typing import Dict, Any, List
 BUCKET_NAME = "engie-weather-data-vincent"
 CITIES_PATH = "static/cities/cities.csv"
 AWS_CONN_ID = "aws_default"
+
+# endregion VARIABLES
+
+
+# region EXTRACT
 
 @task
 def get_cities_from_s3() -> List[Dict[str, Any]]:
@@ -48,7 +54,7 @@ def fetch_weather_data(lat: float, lon: float, date_str: str) -> Dict[str, Any]:
     Args:
         lat: Latitude de la ville.
         lon: Longitude de la ville.
-        date_str: La logical date d'airflow.
+        date_str: La logical date d'airflow au format YYYY-MM-DD.
 
     Returns:
         Un dictionnaire contenant les données météo brutes (JSON).
@@ -66,10 +72,15 @@ def fetch_weather_data(lat: float, lon: float, date_str: str) -> Dict[str, Any]:
     response.raise_for_status()
     return response.json()
 
-# --- 2. CHARGEMENT ---
+# endregion EXTRACT
+
+# region TRANSFORM
+# endregion TRANSFORM   
+
+# region LOAD
 def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -> str:
     """
-    Sauvegarde les données sur S3 avec partitionnement Year/Month/Day.
+    Sauvegarde les données sur S3 avec partitionnement Year/Month/Day/Hour.
 
     Args:
         data: Données météo brutes (JSON).
@@ -97,7 +108,9 @@ def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -
     )
     return s3_key
 
-# --- 3. ORCHESTRATION ---
+# endregion LOAD
+
+# region MAIN
 def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str, l_date: str) -> None:
     """
     Coordonne les étapes pour chaque instance de tâche.
@@ -117,9 +130,10 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
     path = save_to_s3(data, city_name, l_date_obj)
     print(f"Données pour {city_name} stockées dans : {path}")
 
+# endregion MAIN
 
 
-### DAG ###
+# region DAG
 with DAG(
     dag_id='weather_belgium_backfill_partitioned',
     start_date=datetime(2026, 4, 1),
@@ -157,3 +171,5 @@ with DAG(
 
     # On s'assure que toutes les tâches d'ingestion sont finies avant de repair
     ingest_tasks >> repair_athena_table
+
+# endregion DAG 
