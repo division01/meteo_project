@@ -5,6 +5,7 @@ from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 from datetime import datetime, timedelta
 import requests
 import json
+import pendulum
 from typing import Dict, Any
 
 ### VARIABLES ###
@@ -20,13 +21,14 @@ CITIES = {
 
 ### FONCTIONS ###
 # --- 1. EXTRACTION ---
-def fetch_weather_data(lat: float, lon: float) -> Dict[str, Any]:
+def fetch_weather_data(lat: float, lon: float, date_str: str) -> Dict[str, Any]:
     """
-    Appelle l'API Open-Meteo pour récupérer la météo actuelle d'une ville spécifique.
+    Appelle l'API Open-Meteo pour récupérer la météo à la date et heure d'une ville spécifique.
 
     Args:
         lat: Latitude de la ville.
         lon: Longitude de la ville.
+        date_str: La logical date d'airflow.
 
     Returns:
         Un dictionnaire contenant les données météo brutes (JSON).
@@ -35,33 +37,36 @@ def fetch_weather_data(lat: float, lon: float) -> Dict[str, Any]:
         requests.exceptions.HTTPError: Si l'appel API échoue.
     """
 
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={lat}&longitude={lon}&"
+        f"start_date={date_str}&end_date={date_str}&hourly=temperature_2m,windspeed_10m,weathercode"
+    )
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
 
 # --- 2. CHARGEMENT ---
-def save_to_s3(data: Dict[str, Any], city_name: str) -> str:
+def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -> str:
     """
     Sauvegarde les données sur S3 avec partitionnement Year/Month/Day.
 
     Args:
         data: Données météo brutes (JSON).
         city_name: Nom de la ville.
+        l_date: La date logique d'airflow.
 
     Returns:
         S3_key:Chemin S3 où les données ont été stockées.
     """
     s3 = S3Hook(aws_conn_id='aws_default')
     
-    # Création du chemin partitionné (Hive style)
-    now = datetime.now()
-    year = now.strftime('%Y')
-    month = now.strftime('%m')
-    day = now.strftime('%d')
-    hour = now.strftime('%H')
+    # Création du chemin partitionné
+    year = l_date.strftime('%Y')
+    month = l_date.strftime('%m')
+    day = l_date.strftime('%d')
+    hour = l_date.strftime('%H')
     
-    # Structure : weather/year=2026/month=04/day=17/hour=14/bruxelles.json
     s3_key = f"weather/year={year}/month={month}/day={day}/hour={hour}/{city_name.lower()}.json"
     
     s3.load_string(
@@ -73,7 +78,7 @@ def save_to_s3(data: Dict[str, Any], city_name: str) -> str:
     return s3_key
 
 # --- 3. ORCHESTRATION ---
-def weather_pipeline_task(city_name: str, lat: float, lon: float) -> None:
+def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str, l_date: pendulum.DateTime) -> None:
     """
     Coordonne les étapes pour chaque instance de tâche.
 
@@ -81,9 +86,11 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float) -> None:
         city_name: Nom de la ville.
         lat: Latitude de la ville.
         lon: Longitude de la ville.
+        date_str: La date logique d'airflow ( YYYY-MM-DD ).
+        l_date: L'objet datetime pour le partitionnement S3.
     """
-    data = fetch_weather_data(lat, lon)
-    path = save_to_s3(data, city_name)
+    data = fetch_weather_data(lat, lon, date_str)
+    path = save_to_s3(data, city_name, l_date)
     print(f"Données pour {city_name} stockées dans : {path}")
 
 
@@ -93,7 +100,7 @@ with DAG(
     dag_id='weather_belgium_v4_partitioned',
     start_date=datetime(2026, 4, 1),
     schedule='0 * * * *',
-    catchup=False,
+    catchup=True,
     default_args={
         'owner': 'Vincent',
         'retries': 2,
@@ -108,7 +115,9 @@ with DAG(
             op_kwargs={
                 'city_name': city,
                 'lat': coords['lat'],
-                'lon': coords['lon']
+                'lon': coords['lon'],
+                'date_str':"{{ ds }}",          # String YYYY-MM-DD pour l'appel API
+                'l_date': "{{ logical_date }}"  # Objet datetime pour le partitionnement S3
             }
         )
 
