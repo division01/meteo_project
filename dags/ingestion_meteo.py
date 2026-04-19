@@ -97,7 +97,7 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
 
 ### DAG ###
 with DAG(
-    dag_id='weather_belgium_v4_partitioned',
+    dag_id='weather_belgium_backfill_partitioned',
     start_date=datetime(2026, 4, 1),
     schedule='0 * * * *',
     catchup=True,
