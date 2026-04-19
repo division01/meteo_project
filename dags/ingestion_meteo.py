@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 import requests
 import json
 import pendulum
+import logging
 from typing import Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 # region VARIABLES 
 BUCKET_NAME = "engie-weather-data-vincent"
@@ -44,6 +47,7 @@ def get_cities_from_s3() -> List[Dict[str, Any]]:
             'lat': float(lat),
             'lon': float(lon)
         })
+    logger.info(f"Référentiel chargé : {len(cities_list)} villes trouvées.")
     return cities_list
 
 
@@ -68,6 +72,7 @@ def fetch_weather_data(lat: float, lon: float, date_str: str) -> Dict[str, Any]:
         f"latitude={lat}&longitude={lon}&"
         f"start_date={date_str}&end_date={date_str}&hourly=temperature_2m,windspeed_10m,weathercode"
     )
+    logger.debug(f"Appel API : {url}")
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
@@ -122,13 +127,14 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
         date_str: La date logique d'airflow ( YYYY-MM-DD ).
         l_date: Le string de datetime pour le partitionnement S3.
     """
+    logger.info(f"Démarrage de l'ingestion pour : {city_name}")
 
     # On transforme la string reçue d'Airflow en objet Pendulum (datetime)
     l_date_obj = pendulum.parse(l_date)
 
     data = fetch_weather_data(lat, lon, date_str)
     path = save_to_s3(data, city_name, l_date_obj)
-    print(f"Données pour {city_name} stockées dans : {path}")
+    logger.info(f"Succès : {city_name} sauvegardé dans {path}")
 
 # endregion MAIN
 
