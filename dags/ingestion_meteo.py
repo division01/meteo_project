@@ -150,7 +150,7 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
 with DAG(
     dag_id='weather_belgium_backfill_partitioned',
     start_date=datetime(2026, 4, 1),
-    schedule=30 23 * * *',
+    schedule='30 23 * * *',
     catchup=True,
     default_args={
         'owner': 'Vincent',
