@@ -83,7 +83,7 @@ def fetch_weather_data(lat: float, lon: float, date_str: str) -> Dict[str, Any]:
 # endregion TRANSFORM   
 
 # region LOAD
-def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -> str:
+def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime, quality:str, env:str="dev") -> str:
     """
     Sauvegarde les données sur S3 avec partitionnement Year/Month/Day/Hour.
 
@@ -91,6 +91,8 @@ def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -
         data: Données météo brutes (JSON).
         city_name: Nom de la ville.
         l_date: La date logique d'airflow.
+        quality: Archive/Bronze/Silver/Gold
+        env: dev/test/prod
 
     Returns:
         S3_key:Chemin S3 où les données ont été stockées.
@@ -103,7 +105,7 @@ def save_to_s3(data: Dict[str, Any], city_name: str, l_date:pendulum.DateTime) -
     day = l_date.strftime('%d')
     hour = l_date.strftime('%H')
     
-    s3_key = f"weather/year={year}/month={month}/day={day}/hour={hour}/{city_name.lower()}.json"
+    s3_key = f"weather/{env}/{quality}/year={year}/month={month}/day={day}/hour={hour}/{city_name.lower()}.json"
     
     s3.load_string(
         string_data=json.dumps(data),
@@ -133,9 +135,13 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
     # On transforme la string reçue d'Airflow en objet Pendulum (datetime)
     l_date_obj = pendulum.parse(l_date)
 
-    data = fetch_weather_data(lat, lon, date_str)
-    path = save_to_s3(data, city_name, l_date_obj)
-    logger.info(f"Succès : {city_name} sauvegardé dans {path}")
+    full_day_data = fetch_weather_data(lat, lon, date_str)    
+
+    path_archive = save_to_s3(full_day_data, city_name, l_date_obj, "archive")
+    logger.info(f"Succès : {city_name} sauvegardé dans {path_archive}")
+    path_bronze = save_to_s3(full_day_data, city_name, l_date_obj, "bronze")
+    logger.info(f"Succès : {city_name} sauvegardé dans {path_bronze}")
+    return path_bronze
 
 # endregion MAIN
 
@@ -144,12 +150,12 @@ def weather_pipeline_task(city_name: str, lat: float, lon: float, date_str: str,
 with DAG(
     dag_id='weather_belgium_backfill_partitioned',
     start_date=datetime(2026, 4, 1),
-    schedule='0 * * * *',
-    catchup=False,
+    schedule=30 23 * * *',
+    catchup=True,
     default_args={
         'owner': 'Vincent',
         'retries': 2,
-        'retry_delay': timedelta(minutes=5)
+        'retry_delay': timedelta(seconds=30)
     }
 ) as dag:
 
@@ -163,11 +169,23 @@ with DAG(
         l_date="{{ logical_date }}"                 # String datetime pour l'heure pour le partitionnement S3
     ).expand_kwargs(cities)
 
+
+    athena_partition_query = """
+    ALTER TABLE weather_db.weather_data 
+    ADD IF NOT EXISTS PARTITION (
+        year='{{ data_interval_start.year }}', 
+        month='{{ data_interval_start.strftime("%m") }}', 
+        day='{{ data_interval_start.strftime("%d") }}', 
+        hour='{{ data_interval_start.strftime("%H") }}'
+    ) 
+    LOCATION 's3://engie-weather-data-vincent/weather/year={{ data_interval_start.year }}/month={{ data_interval_start.strftime("%m") }}/day={{ data_interval_start.strftime("%d") }}/hour={{ data_interval_start.strftime("%H") }}/';
+    """
+
     # Tâche de synchronisation du catalogue Glue
     # TODO : Ajouter un AWS GLUE Crawler, la tâche est trop longue en case de backfill
     repair_athena_table = AthenaOperator(
         task_id='repair_athena_table',
-        query='MSCK REPAIR TABLE weather_db.weather_data;',
+        query=athena_partition_query,
         database='weather_db',
         aws_conn_id=AWS_CONN_ID,
         output_location=f's3://{BUCKET_NAME}/athena/' 
